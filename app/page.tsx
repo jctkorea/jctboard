@@ -11,6 +11,13 @@ type Post = {
   created_at: string;
 };
 
+type Comment = {
+  id: string;
+  post_id: string;
+  content: string;
+  created_at: string;
+};
+
 function formatDate(iso: string) {
   const date = new Date(iso);
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -19,6 +26,7 @@ function formatDate(iso: string) {
 
 export default function Home() {
   const [posts, setPosts] = useState<Post[]>([]);
+  const [comments, setComments] = useState<Comment[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
   const [isWriting, setIsWriting] = useState(false);
@@ -26,22 +34,31 @@ export default function Home() {
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
   const [openId, setOpenId] = useState<string | null>(null);
+  const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
+  const [submittingFor, setSubmittingFor] = useState<string | null>(null);
 
   useEffect(() => {
-    async function loadPosts() {
-      const { data, error } = await supabase
-        .from("posts")
-        .select("id, title, content, created_at")
-        .order("created_at", { ascending: false });
+    async function loadBoard() {
+      const [postResult, commentResult] = await Promise.all([
+        supabase
+          .from("posts")
+          .select("id, title, content, created_at")
+          .order("created_at", { ascending: false }),
+        supabase
+          .from("comments")
+          .select("id, post_id, content, created_at")
+          .order("created_at", { ascending: true }),
+      ]);
 
-      if (error) {
+      if (postResult.error || commentResult.error) {
         setError("문의를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.");
       } else {
-        setPosts(data);
+        setPosts(postResult.data);
+        setComments(commentResult.data);
       }
       setIsLoading(false);
     }
-    loadPosts();
+    loadBoard();
   }, []);
 
   async function handleSubmit(event: React.FormEvent) {
@@ -69,6 +86,29 @@ export default function Home() {
     setContent("");
     setIsWriting(false);
     setOpenId(data.id);
+  }
+
+  async function handleCommentSubmit(event: React.FormEvent, postId: string) {
+    event.preventDefault();
+    const draft = (commentDrafts[postId] ?? "").trim();
+    if (!draft) return;
+
+    setSubmittingFor(postId);
+    setError("");
+    const { data, error } = await supabase
+      .from("comments")
+      .insert({ post_id: postId, content: draft })
+      .select("id, post_id, content, created_at")
+      .single();
+    setSubmittingFor(null);
+
+    if (error) {
+      setError("댓글을 등록하지 못했습니다. 잠시 후 다시 시도해 주세요.");
+      return;
+    }
+
+    setComments([...comments, data]);
+    setCommentDrafts({ ...commentDrafts, [postId]: "" });
   }
 
   return (
@@ -142,23 +182,74 @@ export default function Home() {
 
       {posts.length > 0 && (
       <ul className={styles.list}>
-        {posts.map((post) => (
-          <li key={post.id} className={styles.item}>
-            <button
-              type="button"
-              className={styles.itemHead}
-              onClick={() => setOpenId(openId === post.id ? null : post.id)}
-            >
-              <span className={styles.itemTitle}>{post.title}</span>
-              <span className={styles.meta}>
-                익명 · {formatDate(post.created_at)}
-              </span>
-            </button>
-            {openId === post.id && (
-              <p className={styles.content}>{post.content}</p>
-            )}
-          </li>
-        ))}
+        {posts.map((post) => {
+          const postComments = comments.filter((c) => c.post_id === post.id);
+          const draft = commentDrafts[post.id] ?? "";
+
+          return (
+            <li key={post.id} className={styles.item}>
+              <button
+                type="button"
+                className={styles.itemHead}
+                onClick={() => setOpenId(openId === post.id ? null : post.id)}
+              >
+                <span className={styles.itemTitle}>
+                  {post.title}
+                  {postComments.length > 0 && (
+                    <span className={styles.commentCount}>
+                      {postComments.length}
+                    </span>
+                  )}
+                </span>
+                <span className={styles.meta}>
+                  익명 · {formatDate(post.created_at)}
+                </span>
+              </button>
+
+              {openId === post.id && (
+                <>
+                  <p className={styles.content}>{post.content}</p>
+
+                  <div className={styles.comments}>
+                    {postComments.map((comment) => (
+                      <div key={comment.id} className={styles.comment}>
+                        <p className={styles.commentText}>{comment.content}</p>
+                        <span className={styles.commentMeta}>
+                          익명 · {formatDate(comment.created_at)}
+                        </span>
+                      </div>
+                    ))}
+
+                    <form
+                      className={styles.commentForm}
+                      onSubmit={(e) => handleCommentSubmit(e, post.id)}
+                    >
+                      <input
+                        className={styles.commentInput}
+                        value={draft}
+                        onChange={(e) =>
+                          setCommentDrafts({
+                            ...commentDrafts,
+                            [post.id]: e.target.value,
+                          })
+                        }
+                        placeholder="댓글을 남겨주세요."
+                        maxLength={1000}
+                      />
+                      <button
+                        type="submit"
+                        className={styles.commentButton}
+                        disabled={!draft.trim() || submittingFor === post.id}
+                      >
+                        {submittingFor === post.id ? "등록 중..." : "댓글 등록"}
+                      </button>
+                    </form>
+                  </div>
+                </>
+              )}
+            </li>
+          );
+        })}
       </ul>
       )}
     </div>
