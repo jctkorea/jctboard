@@ -16,7 +16,10 @@ type Comment = {
   post_id: string;
   content: string;
   created_at: string;
+  is_auto: boolean;
 };
+
+const COMMENT_FIELDS = "id, post_id, content, created_at, is_auto";
 
 function formatDate(iso: string) {
   const date = new Date(iso);
@@ -46,7 +49,7 @@ export default function Home() {
           .order("created_at", { ascending: false }),
         supabase
           .from("comments")
-          .select("id, post_id, content, created_at")
+          .select(COMMENT_FIELDS)
           .order("created_at", { ascending: true }),
       ]);
 
@@ -81,7 +84,15 @@ export default function Home() {
       return;
     }
 
+    // 글이 등록되면 DB 트리거가 접수 확인 댓글을 남기므로 함께 가져온다.
+    const { data: ackComments } = await supabase
+      .from("comments")
+      .select(COMMENT_FIELDS)
+      .eq("post_id", data.id)
+      .order("created_at", { ascending: true });
+
     setPosts([data, ...posts]);
+    if (ackComments) setComments([...comments, ...ackComments]);
     setTitle("");
     setContent("");
     setIsWriting(false);
@@ -98,7 +109,7 @@ export default function Home() {
     const { data, error } = await supabase
       .from("comments")
       .insert({ post_id: postId, content: draft })
-      .select("id, post_id, content, created_at")
+      .select(COMMENT_FIELDS)
       .single();
     setSubmittingFor(null);
 
@@ -212,10 +223,22 @@ export default function Home() {
 
                   <div className={styles.comments}>
                     {postComments.map((comment) => (
-                      <div key={comment.id} className={styles.comment}>
+                      <div
+                        key={comment.id}
+                        className={
+                          comment.is_auto
+                            ? `${styles.comment} ${styles.autoComment}`
+                            : styles.comment
+                        }
+                      >
                         <p className={styles.commentText}>{comment.content}</p>
                         <span className={styles.commentMeta}>
-                          익명 · {formatDate(comment.created_at)}
+                          {comment.is_auto ? (
+                            <span className={styles.autoBadge}>자동 응답</span>
+                          ) : (
+                            "익명"
+                          )}{" "}
+                          · {formatDate(comment.created_at)}
                         </span>
                       </div>
                     ))}
